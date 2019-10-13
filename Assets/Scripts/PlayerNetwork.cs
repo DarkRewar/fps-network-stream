@@ -1,4 +1,6 @@
 ﻿using System;
+using System.Collections;
+using FPSNetwork;
 using Mirror;
 using UnityEngine;
 using UnityEngine.UI;
@@ -8,6 +10,10 @@ public class PlayerNetwork : NetworkBehaviour
 {
     public Camera PlayerCam;
 
+    public Transform Weapon;
+
+    public GameObject PlayerGraphics;
+
     [SyncVar(hook = "OnLifeChanged")]
     public int Lifepoints = 3;
 
@@ -15,11 +21,21 @@ public class PlayerNetwork : NetworkBehaviour
 
     public Slider Lifebar;
 
+    [SyncVar]
+    public PlayerInformations Informations;
+
+    [Header("Feedbacks")]
+    public GameObject HitPrefab;
+
     private CharacterController _controller;
 
     private Vector3 _movement;
 
     private bool _isPaused = false;
+
+    private Vector3 _weaponPosition;
+
+    private Animator _animator;
 
     // Start is called before the first frame update
     void Start()
@@ -28,9 +44,42 @@ public class PlayerNetwork : NetworkBehaviour
 
         GameManager.AddPlayer(this);
 
+        _weaponPosition = Weapon.localPosition;
+
+        _animator = PlayerGraphics.GetComponent<Animator>();
+
+        PlayerCam.gameObject.SetActive(isLocalPlayer);
+
+        foreach(Transform t in PlayerGraphics.transform)
+        {
+            t.gameObject?.SetActive(!isLocalPlayer);
+        }
+
         if (!isLocalPlayer)
         {
-            PlayerCam.enabled = false;
+            foreach(AudioListener audio in GetComponentsInChildren<AudioListener>())
+            {
+                audio.enabled = false;
+            }
+        }
+    }
+
+    private void OnEnable()
+    {
+        if (isLocalPlayer)
+        {
+            Camera.main.enabled = false;
+        }
+    }
+
+    private void OnDisable()
+    {
+        if (isLocalPlayer)
+        {
+            Camera.main.enabled = true;
+
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
         }
     }
 
@@ -53,6 +102,9 @@ public class PlayerNetwork : NetworkBehaviour
                 Input.GetAxis("Vertical")                
             );
 
+            _animator.SetFloat("Horizontal", _movement.x);
+            _animator.SetFloat("Vertical", _movement.z);
+
             transform.Rotate(transform.up, Input.GetAxis("Mouse X"));
 
             var rot = PlayerCam.transform.localEulerAngles;
@@ -62,7 +114,8 @@ public class PlayerNetwork : NetworkBehaviour
 
             if (Input.GetButtonDown("Fire1"))
             {
-                CmdShoot();
+                CmdShoot(PlayerCam.transform.position, PlayerCam.transform.forward);
+                FeedbackShoot();
             }
         }
     }
@@ -113,12 +166,18 @@ public class PlayerNetwork : NetworkBehaviour
     /// EXECUTE COTE SERVEUR MAIS APPELE PAR LE CLIENT
     /// </summary>
     [Command]
-    public void CmdShoot()
+    public void CmdShoot(Vector3 origin, Vector3 direction)
     {
         Debug.Log("CmdShoot");
-        Ray ray = new Ray(PlayerCam.transform.position, PlayerCam.transform.forward);
+
+        RpcShoot();
+
+        Ray ray = new Ray(origin, direction);
+        Debug.DrawRay(origin, direction * 100, Color.magenta, 30);
         if (Physics.Raycast(ray, out RaycastHit hit, 1000))
         {
+            RpcShootHit(hit.point, hit.normal);
+
             if (hit.collider.gameObject.CompareTag("Player"))
             {
                 PlayerNetwork player = hit.collider.GetComponentInParent<PlayerNetwork>();
@@ -126,6 +185,8 @@ public class PlayerNetwork : NetworkBehaviour
 
                 if (player.Lifepoints <= 0)
                 {
+                    ++Informations.Kills;
+                    ++player.Informations.Deaths;
                     GameManager.Instance.KillPlayer(player);
                 }
             }
@@ -143,5 +204,42 @@ public class PlayerNetwork : NetworkBehaviour
                 }
             }
         }
+    }
+
+    [ClientRpc]
+    public void RpcShoot()
+    {
+        // SFX
+        if (!isLocalPlayer)
+        {
+            FeedbackShoot();
+        }
+    }
+
+    [ClientRpc]
+    public void RpcShootHit(Vector3 point, Vector3 normal)
+    {
+        GameObject go = Instantiate(HitPrefab, point, Quaternion.LookRotation(point, normal));
+        Destroy(go, 1);
+    }
+
+    private void FeedbackShoot()
+    {
+        StartCoroutine(DoRecoil());
+    }
+
+    private IEnumerator DoRecoil()
+    {
+        float duration = 0.5f;
+        float time = 0;
+        Vector3 firstPos = Weapon.localPosition - Vector3.forward * 0.03f;
+
+        while (time < duration)
+        {
+            Weapon.localPosition = Vector3.Lerp(firstPos, _weaponPosition, time / duration);
+            time += Time.deltaTime;
+            yield return new WaitForEndOfFrame();
+        }
+        Weapon.localPosition = _weaponPosition;
     }
 }

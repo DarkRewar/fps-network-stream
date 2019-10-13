@@ -3,10 +3,14 @@ using System.Collections;
 using System.Collections.Generic;
 using System;
 using Mirror;
+using TMPro;
+using FPSNetwork;
 
 public class GameManager : MonoSingleton<GameManager>
 {
     public List<PlayerNetwork> Players = new List<PlayerNetwork>();
+
+    public TMP_Text KillTexts;
 
     // Use this for initialization
     void Start()
@@ -32,18 +36,39 @@ public class GameManager : MonoSingleton<GameManager>
 
     internal void KillPlayer(PlayerNetwork player)
     {
+        MessageNetworker.Instance.RpcKillPlayer(player.connectionToClient.connectionId);
         StartCoroutine(DoRespawnPlayer(player));
+        KillTexts.text += $"Kill : Player {player.connectionToClient.connectionId}\n";
+    }
 
-        //NetworkServer.Destroy(player.gameObject);
+    internal void KillPlayerOnClient(PlayerNetwork player)
+    {
+        KillTexts.text += $"Kill : Player {player.connectionToClient.connectionId}\n";
+    }
+
+    internal void KillPlayerOnClient(int connectionId)
+    {
+        KillTexts.text += $"Kill : Player {connectionId}\n";
     }
 
     private IEnumerator DoRespawnPlayer(PlayerNetwork player)
     {
         player.gameObject.SetActive(false);
 
-        yield return new WaitForSeconds(3f);
+        yield return new WaitForSeconds(1f);
 
-        player.gameObject.SetActive(true);
-        player.Lifepoints = 3;
+        NetworkConnection netCon = player.connectionToClient;
+        PlayerInformations infos = new PlayerInformations(player.Informations);
+        Transform t = NetworkManager.singleton.GetStartPosition();
+        NetworkServer.Destroy(player.gameObject);
+
+        yield return new WaitForSeconds(2f);
+
+        //ClientScene.AddPlayer();
+
+        GameObject newPlayer = Instantiate(NetworkManager.singleton.playerPrefab, t.position, t.rotation);
+        newPlayer.gameObject.SetActive(true);
+        newPlayer.GetComponent<PlayerNetwork>().Lifepoints = 3;
+        NetworkServer.AddPlayerForConnection(netCon, newPlayer);
     }
 }
